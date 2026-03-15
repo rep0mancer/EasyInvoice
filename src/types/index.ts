@@ -17,6 +17,12 @@ export interface Customer {
   vatId: string;
 }
 
+export interface CustomerDraft {
+  name: string;
+  address: string;
+  vatId: string;
+}
+
 export interface LineItem {
   id: string;
   description: string;
@@ -41,4 +47,14 @@ export interface Invoice {
   paidMethod?: string;
   paidNotes?: string;
   createdAt: string;
+}
+
+export interface InvoiceDraft {
+  customerId: string | null;
+  invoiceNumber: string;
+  invoiceDate: string;
+  dueDate: string;
+  items: LineItem[];
+  notes: string;
+  createdInvoiceId: string | null;
 }

@@ -1,30 +1,26 @@
 import { create } from 'zustand';
+import { ApiError, authApi, clientsApi, invoicesApi, profileApi } from '../lib/api';
 import {
-  buildInvoiceFromDraft,
   createEmptyBusinessProfile,
   createEmptyCustomerDraft,
   createInvoiceDraft,
   formatInvoiceNumber,
 } from '../lib/invoice';
 import {
-  deleteCustomer as deleteStoredCustomer,
-  generateId,
-  loadAppData,
-  saveCustomer,
-  saveInvoices,
-  saveProfile,
-  setNextInvoiceSequence,
-} from '../lib/storage';
-import {
+  AuthCredentials,
+  AuthUser,
   BusinessProfile,
   Customer,
   CustomerDraft,
   Invoice,
   InvoiceDraft,
   LineItem,
+  RegisterCredentials,
+  SessionPayload,
 } from '../types';
 
 type InvoiceBuilderStep = 1 | 2 | 3;
+type AuthStatus = 'checking' | 'authenticated' | 'anonymous';
 
 interface HistoryFilters {
   search: string;
@@ -44,11 +40,18 @@ interface CustomerEditorState {
 }
 
 interface AppStore {
+  authStatus: AuthStatus;
+  authUser: AuthUser | null;
   profile: BusinessProfile | null;
   settingsForm: BusinessProfile;
   customers: Customer[];
   invoices: Invoice[];
-  nextInvoiceSequence: number;
+  nextInvoiceNumber: string;
+  isInitializing: boolean;
+  isAuthSubmitting: boolean;
+  isSyncing: boolean;
+  errorMessage: string | null;
+  authError: string | null;
   invoiceBuilderStep: InvoiceBuilderStep;
   invoiceDraft: InvoiceDraft;
   invoiceCustomerSearch: string;
@@ -59,21 +62,27 @@ interface AppStore {
   paymentDialog: PaymentDialogState;
   clientSearch: string;
   customerEditor: CustomerEditorState;
+  initializeApp: () => Promise<void>;
+  login: (credentials: AuthCredentials) => Promise<void>;
+  register: (credentials: RegisterCredentials) => Promise<void>;
+  logout: () => Promise<void>;
+  clearError: () => void;
+  clearAuthError: () => void;
   updateSettingsField: <K extends keyof BusinessProfile>(field: K, value: BusinessProfile[K]) => void;
   resetSettingsForm: () => void;
-  saveSettingsForm: () => void;
+  saveSettingsForm: () => Promise<void>;
   setInvoiceBuilderStep: (step: InvoiceBuilderStep) => void;
   resetInvoiceDraft: (customerId?: string | null) => void;
   setInvoiceCustomerSearch: (search: string) => void;
   selectDraftCustomer: (customerId: string) => void;
   setDraftCustomerMode: (isEnabled: boolean) => void;
   updateDraftCustomerField: <K extends keyof CustomerDraft>(field: K, value: CustomerDraft[K]) => void;
-  saveDraftCustomer: () => Customer | null;
+  saveDraftCustomer: () => Promise<Customer | null>;
   updateInvoiceDraftField: <K extends keyof InvoiceDraft>(field: K, value: InvoiceDraft[K]) => void;
   addInvoiceDraftItem: () => void;
   removeInvoiceDraftItem: (id: string) => void;
   updateInvoiceDraftItem: <K extends keyof LineItem>(id: string, field: K, value: LineItem[K]) => void;
-  createInvoice: () => Invoice | null;
+  createInvoice: () => Promise<Invoice | null>;
   prepareNextInvoice: () => void;
   setHistoryFilter: <K extends keyof HistoryFilters>(field: K, value: HistoryFilters[K]) => void;
   openInvoicePreview: (invoiceId: string) => void;
@@ -84,17 +93,17 @@ interface AppStore {
     field: K,
     value: PaymentDialogState[K],
   ) => void;
-  savePaymentDialog: () => void;
+  savePaymentDialog: () => Promise<void>;
   setClientSearch: (search: string) => void;
   startCustomerDraft: (customerId?: string) => void;
   updateCustomerEditorField: <K extends keyof CustomerDraft>(field: K, value: CustomerDraft[K]) => void;
-  saveCustomerEditor: () => Customer | null;
+  saveCustomerEditor: () => Promise<Customer | null>;
   cancelCustomerEditor: () => void;
-  removeCustomer: (customerId: string) => void;
+  removeCustomer: (customerId: string) => Promise<void>;
   beginInvoiceForCustomer: (customerId: string) => void;
 }
 
-const initialData = loadAppData();
+const defaultInvoiceNumber = formatInvoiceNumber(1);
 
 function createPaymentDialog(): PaymentDialogState {
   return {
@@ -111,16 +120,92 @@ function createCustomerEditor(): CustomerEditorState {
   };
 }
 
+function getErrorMessage(error: unknown) {
+  if (error instanceof ApiError) {
+    return error.message;
+  }
+
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return 'Unexpected error';
+}
+
+function buildAnonymousState() {
+  return {
+    authStatus: 'anonymous' as const,
+    authUser: null,
+    profile: null,
+    settingsForm: createEmptyBusinessProfile(),
+    customers: [],
+    invoices: [],
+    nextInvoiceNumber: defaultInvoiceNumber,
+    invoiceBuilderStep: 1 as const,
+    invoiceDraft: createInvoiceDraft(defaultInvoiceNumber),
+    invoiceCustomerSearch: '',
+    isAddingDraftCustomer: false,
+    draftCustomerForm: createEmptyCustomerDraft(),
+    historyFilters: {
+      search: '',
+      dateFrom: '',
+      dateTo: '',
+    },
+    previewInvoiceId: null,
+    paymentDialog: createPaymentDialog(),
+    clientSearch: '',
+    customerEditor: createCustomerEditor(),
+  };
+}
+
+async function loadTenantData(session: SessionPayload) {
+  const [clientsResponse, invoicesResponse] = await Promise.all([
+    clientsApi.list(),
+    invoicesApi.list(),
+  ]);
+
+  return {
+    authStatus: 'authenticated' as const,
+    authUser: session.user,
+    profile: session.profile,
+    settingsForm: session.profile,
+    customers: clientsResponse.clients,
+    invoices: invoicesResponse.invoices,
+    nextInvoiceNumber: session.nextInvoiceNumber,
+    invoiceBuilderStep: 1 as const,
+    invoiceDraft: createInvoiceDraft(session.nextInvoiceNumber),
+    invoiceCustomerSearch: '',
+    isAddingDraftCustomer: clientsResponse.clients.length === 0,
+    draftCustomerForm: createEmptyCustomerDraft(),
+    historyFilters: {
+      search: '',
+      dateFrom: '',
+      dateTo: '',
+    },
+    previewInvoiceId: null,
+    paymentDialog: createPaymentDialog(),
+    clientSearch: '',
+    customerEditor: createCustomerEditor(),
+  };
+}
+
 export const useAppStore = create<AppStore>((set, get) => ({
-  profile: initialData.profile,
-  settingsForm: initialData.profile ?? createEmptyBusinessProfile(),
-  customers: initialData.customers,
-  invoices: initialData.invoices,
-  nextInvoiceSequence: initialData.nextInvoiceSequence,
+  authStatus: 'checking',
+  authUser: null,
+  profile: null,
+  settingsForm: createEmptyBusinessProfile(),
+  customers: [],
+  invoices: [],
+  nextInvoiceNumber: defaultInvoiceNumber,
+  isInitializing: false,
+  isAuthSubmitting: false,
+  isSyncing: false,
+  errorMessage: null,
+  authError: null,
   invoiceBuilderStep: 1,
-  invoiceDraft: createInvoiceDraft(initialData.nextInvoiceSequence),
+  invoiceDraft: createInvoiceDraft(defaultInvoiceNumber),
   invoiceCustomerSearch: '',
-  isAddingDraftCustomer: initialData.customers.length === 0,
+  isAddingDraftCustomer: false,
   draftCustomerForm: createEmptyCustomerDraft(),
   historyFilters: {
     search: '',
@@ -131,6 +216,127 @@ export const useAppStore = create<AppStore>((set, get) => ({
   paymentDialog: createPaymentDialog(),
   clientSearch: '',
   customerEditor: createCustomerEditor(),
+
+  initializeApp: async () => {
+    set({
+      authStatus: 'checking',
+      isInitializing: true,
+      errorMessage: null,
+      authError: null,
+    });
+
+    try {
+      const session = await authApi.me();
+      const authenticatedState = await loadTenantData(session);
+
+      set({
+        ...authenticatedState,
+        isInitializing: false,
+        isAuthSubmitting: false,
+        isSyncing: false,
+        errorMessage: null,
+        authError: null,
+      });
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        set({
+          ...buildAnonymousState(),
+          isInitializing: false,
+          isAuthSubmitting: false,
+          isSyncing: false,
+          errorMessage: null,
+          authError: null,
+        });
+        return;
+      }
+
+      set({
+        ...buildAnonymousState(),
+        isInitializing: false,
+        isAuthSubmitting: false,
+        isSyncing: false,
+        errorMessage: getErrorMessage(error),
+        authError: null,
+      });
+    }
+  },
+
+  login: async credentials => {
+    set({
+      isAuthSubmitting: true,
+      authError: null,
+      errorMessage: null,
+    });
+
+    try {
+      const session = await authApi.login(credentials);
+      const authenticatedState = await loadTenantData(session);
+
+      set({
+        ...authenticatedState,
+        isInitializing: false,
+        isAuthSubmitting: false,
+        isSyncing: false,
+        errorMessage: null,
+        authError: null,
+      });
+    } catch (error) {
+      set({
+        isAuthSubmitting: false,
+        authError: getErrorMessage(error),
+      });
+    }
+  },
+
+  register: async credentials => {
+    set({
+      isAuthSubmitting: true,
+      authError: null,
+      errorMessage: null,
+    });
+
+    try {
+      const session = await authApi.register(credentials);
+      const authenticatedState = await loadTenantData(session);
+
+      set({
+        ...authenticatedState,
+        isInitializing: false,
+        isAuthSubmitting: false,
+        isSyncing: false,
+        errorMessage: null,
+        authError: null,
+      });
+    } catch (error) {
+      set({
+        isAuthSubmitting: false,
+        authError: getErrorMessage(error),
+      });
+    }
+  },
+
+  logout: async () => {
+    try {
+      await authApi.logout();
+    } finally {
+      set({
+        ...buildAnonymousState(),
+        isInitializing: false,
+        isAuthSubmitting: false,
+        isSyncing: false,
+        errorMessage: null,
+        authError: null,
+      });
+    }
+  },
+
+  clearError: () => {
+    set({ errorMessage: null });
+  },
+
+  clearAuthError: () => {
+    set({ authError: null });
+  },
 
   updateSettingsField: (field, value) => {
     set(state => ({
@@ -147,26 +353,50 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }));
   },
 
-  saveSettingsForm: () => {
-    const profile = get().settingsForm;
-    saveProfile(profile);
-    set({
-      profile,
-      settingsForm: profile,
-    });
+  saveSettingsForm: async () => {
+    set({ isSyncing: true, errorMessage: null });
+
+    try {
+      const response = await profileApi.update(get().settingsForm);
+      set({
+        profile: response.profile,
+        settingsForm: response.profile,
+        nextInvoiceNumber: response.nextInvoiceNumber,
+        invoiceDraft: createInvoiceDraft(
+          response.nextInvoiceNumber,
+          get().invoiceDraft.customerId,
+        ),
+        isSyncing: false,
+      });
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        set({
+          ...buildAnonymousState(),
+          isInitializing: false,
+          isAuthSubmitting: false,
+          isSyncing: false,
+          errorMessage: null,
+          authError: null,
+        });
+        return;
+      }
+
+      set({
+        isSyncing: false,
+        errorMessage: getErrorMessage(error),
+      });
+    }
   },
 
   setInvoiceBuilderStep: step => {
-    set({
-      invoiceBuilderStep: step,
-    });
+    set({ invoiceBuilderStep: step });
   },
 
   resetInvoiceDraft: customerId => {
     set(state => ({
       invoiceBuilderStep: 1,
       invoiceDraft: createInvoiceDraft(
-        state.nextInvoiceSequence,
+        state.nextInvoiceNumber,
         customerId ?? state.invoiceDraft.customerId,
       ),
       invoiceCustomerSearch: '',
@@ -176,9 +406,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   setInvoiceCustomerSearch: search => {
-    set({
-      invoiceCustomerSearch: search,
-    });
+    set({ invoiceCustomerSearch: search });
   },
 
   selectDraftCustomer: customerId => {
@@ -208,30 +436,49 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }));
   },
 
-  saveDraftCustomer: () => {
+  saveDraftCustomer: async () => {
     const { draftCustomerForm } = get();
+
     if (!draftCustomerForm.name || !draftCustomerForm.address) {
       return null;
     }
 
-    const customer: Customer = {
-      id: generateId(),
-      ...draftCustomerForm,
-    };
+    set({ isSyncing: true, errorMessage: null });
 
-    saveCustomer(customer);
+    try {
+      const response = await clientsApi.create(draftCustomerForm);
 
-    set(state => ({
-      customers: [...state.customers, customer],
-      invoiceDraft: {
-        ...state.invoiceDraft,
-        customerId: customer.id,
-      },
-      isAddingDraftCustomer: false,
-      draftCustomerForm: createEmptyCustomerDraft(),
-    }));
+      set(state => ({
+        customers: [...state.customers, response.client],
+        invoiceDraft: {
+          ...state.invoiceDraft,
+          customerId: response.client.id,
+        },
+        isAddingDraftCustomer: false,
+        draftCustomerForm: createEmptyCustomerDraft(),
+        isSyncing: false,
+      }));
 
-    return customer;
+      return response.client;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        set({
+          ...buildAnonymousState(),
+          isInitializing: false,
+          isAuthSubmitting: false,
+          isSyncing: false,
+          errorMessage: null,
+          authError: null,
+        });
+        return null;
+      }
+
+      set({
+        isSyncing: false,
+        errorMessage: getErrorMessage(error),
+      });
+      return null;
+    }
   },
 
   updateInvoiceDraftField: (field, value) => {
@@ -247,13 +494,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set(state => ({
       invoiceDraft: {
         ...state.invoiceDraft,
-        items: [...state.invoiceDraft.items, {
-          id: generateId(),
-          description: '',
-          quantity: 1,
-          unitPrice: 0,
-          vatRate: 20,
-        }],
+        items: [
+          ...state.invoiceDraft.items,
+          {
+            id: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            description: '',
+            quantity: 1,
+            unitPrice: 0,
+            vatRate: 20,
+          },
+        ],
       },
     }));
   },
@@ -285,38 +535,64 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }));
   },
 
-  createInvoice: () => {
-    const { customers, invoiceDraft, nextInvoiceSequence } = get();
-    const customer = customers.find(entry => entry.id === invoiceDraft.customerId);
-    if (!customer) {
+  createInvoice: async () => {
+    const { invoiceDraft } = get();
+
+    if (!invoiceDraft.customerId) {
       return null;
     }
 
-    const invoice = buildInvoiceFromDraft(invoiceDraft, customer);
-    const updatedInvoices = [invoice, ...get().invoices];
-    const updatedSequence = nextInvoiceSequence + 1;
+    set({ isSyncing: true, errorMessage: null });
 
-    saveInvoices(updatedInvoices);
-    setNextInvoiceSequence(updatedSequence);
+    try {
+      const response = await invoicesApi.create({
+        clientId: invoiceDraft.customerId,
+        invoiceDate: invoiceDraft.invoiceDate,
+        dueDate: invoiceDraft.dueDate,
+        items: invoiceDraft.items,
+        notes: invoiceDraft.notes,
+      });
 
-    set({
-      invoices: updatedInvoices,
-      nextInvoiceSequence: updatedSequence,
-      invoiceDraft: {
-        ...invoiceDraft,
-        createdInvoiceId: invoice.id,
-      },
-      invoiceBuilderStep: 3,
-    });
+      set(state => ({
+        invoices: [response.invoice, ...state.invoices],
+        nextInvoiceNumber: response.nextInvoiceNumber ?? state.nextInvoiceNumber,
+        invoiceDraft: {
+          ...state.invoiceDraft,
+          createdInvoiceId: response.invoice.id,
+          invoiceNumber: response.nextInvoiceNumber ?? state.nextInvoiceNumber,
+        },
+        invoiceBuilderStep: 3,
+        isSyncing: false,
+      }));
 
-    return invoice;
+      return response.invoice;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        set({
+          ...buildAnonymousState(),
+          isInitializing: false,
+          isAuthSubmitting: false,
+          isSyncing: false,
+          errorMessage: null,
+          authError: null,
+        });
+        return null;
+      }
+
+      set({
+        isSyncing: false,
+        errorMessage: getErrorMessage(error),
+      });
+
+      return null;
+    }
   },
 
   prepareNextInvoice: () => {
     set(state => ({
       invoiceBuilderStep: 1,
       invoiceDraft: createInvoiceDraft(
-        state.nextInvoiceSequence,
+        state.nextInvoiceNumber,
         state.invoiceDraft.customerId,
       ),
       invoiceCustomerSearch: '',
@@ -335,15 +611,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   openInvoicePreview: invoiceId => {
-    set({
-      previewInvoiceId: invoiceId,
-    });
+    set({ previewInvoiceId: invoiceId });
   },
 
   closeInvoicePreview: () => {
-    set({
-      previewInvoiceId: null,
-    });
+    set({ previewInvoiceId: null });
   },
 
   openPaymentDialog: invoiceId => {
@@ -358,9 +630,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   closePaymentDialog: () => {
-    set({
-      paymentDialog: createPaymentDialog(),
-    });
+    set({ paymentDialog: createPaymentDialog() });
   },
 
   updatePaymentDialogField: (field, value) => {
@@ -372,50 +642,65 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }));
   },
 
-  savePaymentDialog: () => {
-    const { invoices, paymentDialog } = get();
-    if (!paymentDialog.invoiceId) {
+  savePaymentDialog: async () => {
+    const { paymentDialog, invoices } = get();
+    const invoice = invoices.find(entry => entry.id === paymentDialog.invoiceId);
+
+    if (!invoice) {
       return;
     }
 
-    const updatedInvoices = invoices.map(invoice => {
-      if (invoice.id !== paymentDialog.invoiceId) {
-        return invoice;
+    set({ isSyncing: true, errorMessage: null });
+
+    try {
+      const response = await invoicesApi.updatePayment(invoice.id, {
+        paid: !invoice.paid,
+        method: paymentDialog.method,
+        notes: paymentDialog.notes,
+      });
+
+      set(state => ({
+        invoices: state.invoices.map(entry => entry.id === response.invoice.id ? response.invoice : entry),
+        paymentDialog: createPaymentDialog(),
+        isSyncing: false,
+      }));
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        set({
+          ...buildAnonymousState(),
+          isInitializing: false,
+          isAuthSubmitting: false,
+          isSyncing: false,
+          errorMessage: null,
+          authError: null,
+        });
+        return;
       }
 
-      const nextPaid = !invoice.paid;
-
-      return {
-        ...invoice,
-        paid: nextPaid,
-        paidMethod: paymentDialog.method,
-        paidNotes: paymentDialog.notes,
-        paidDate: nextPaid ? new Date().toISOString().split('T')[0] : undefined,
-      };
-    });
-
-    saveInvoices(updatedInvoices);
-    set({
-      invoices: updatedInvoices,
-      paymentDialog: createPaymentDialog(),
-    });
+      set({
+        isSyncing: false,
+        errorMessage: getErrorMessage(error),
+      });
+    }
   },
 
   setClientSearch: search => {
-    set({
-      clientSearch: search,
-    });
+    set({ clientSearch: search });
   },
 
   startCustomerDraft: customerId => {
     if (!customerId) {
       set({
-        customerEditor: createCustomerEditor(),
+        customerEditor: {
+          editingId: null,
+          draft: createEmptyCustomerDraft(),
+        },
       });
       return;
     }
 
     const customer = get().customers.find(entry => entry.id === customerId);
+
     if (!customer) {
       return;
     }
@@ -444,57 +729,92 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }));
   },
 
-  saveCustomerEditor: () => {
-    const { customerEditor, customers } = get();
+  saveCustomerEditor: async () => {
+    const { customerEditor } = get();
+
     if (!customerEditor.draft.name || !customerEditor.draft.address) {
       return null;
     }
 
-    const customer: Customer = {
-      id: customerEditor.editingId ?? generateId(),
-      ...customerEditor.draft,
-    };
+    set({ isSyncing: true, errorMessage: null });
 
-    saveCustomer(customer);
+    try {
+      const response = customerEditor.editingId
+        ? await clientsApi.update(customerEditor.editingId, customerEditor.draft)
+        : await clientsApi.create(customerEditor.draft);
 
-    const updatedCustomers = customerEditor.editingId
-      ? customers.map(entry => entry.id === customer.id ? customer : entry)
-      : [...customers, customer];
+      set(state => ({
+        customers: customerEditor.editingId
+          ? state.customers.map(entry => entry.id === response.client.id ? response.client : entry)
+          : [...state.customers, response.client],
+        customerEditor: createCustomerEditor(),
+        isSyncing: false,
+      }));
 
-    set(state => ({
-      customers: updatedCustomers,
-      customerEditor: createCustomerEditor(),
-      invoiceDraft: state.invoiceDraft.customerId === customer.id
-        ? {
-            ...state.invoiceDraft,
-            customerId: customer.id,
-          }
-        : state.invoiceDraft,
-    }));
+      return response.client;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        set({
+          ...buildAnonymousState(),
+          isInitializing: false,
+          isAuthSubmitting: false,
+          isSyncing: false,
+          errorMessage: null,
+          authError: null,
+        });
+        return null;
+      }
 
-    return customer;
+      set({
+        isSyncing: false,
+        errorMessage: getErrorMessage(error),
+      });
+
+      return null;
+    }
   },
 
   cancelCustomerEditor: () => {
-    set({
-      customerEditor: createCustomerEditor(),
-    });
+    set({ customerEditor: createCustomerEditor() });
   },
 
-  removeCustomer: customerId => {
-    deleteStoredCustomer(customerId);
-    set(state => ({
-      customers: state.customers.filter(customer => customer.id !== customerId),
-      invoiceDraft: state.invoiceDraft.customerId === customerId
-        ? createInvoiceDraft(state.nextInvoiceSequence)
-        : state.invoiceDraft,
-    }));
+  removeCustomer: async customerId => {
+    set({ isSyncing: true, errorMessage: null });
+
+    try {
+      await clientsApi.delete(customerId);
+
+      set(state => ({
+        customers: state.customers.filter(customer => customer.id !== customerId),
+        invoiceDraft: state.invoiceDraft.customerId === customerId
+          ? createInvoiceDraft(state.nextInvoiceNumber)
+          : state.invoiceDraft,
+        isSyncing: false,
+      }));
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        set({
+          ...buildAnonymousState(),
+          isInitializing: false,
+          isAuthSubmitting: false,
+          isSyncing: false,
+          errorMessage: null,
+          authError: null,
+        });
+        return;
+      }
+
+      set({
+        isSyncing: false,
+        errorMessage: getErrorMessage(error),
+      });
+    }
   },
 
   beginInvoiceForCustomer: customerId => {
     set(state => ({
       invoiceBuilderStep: 1,
-      invoiceDraft: createInvoiceDraft(state.nextInvoiceSequence, customerId),
+      invoiceDraft: createInvoiceDraft(state.nextInvoiceNumber, customerId),
       isAddingDraftCustomer: false,
       invoiceCustomerSearch: '',
       draftCustomerForm: createEmptyCustomerDraft(),
@@ -532,16 +852,4 @@ export function selectDraftCustomer(state: AppStore): Customer | null {
   }
 
   return state.customers.find(customer => customer.id === state.invoiceDraft.customerId) ?? null;
-}
-
-export function selectCustomerForEdit(state: AppStore): Customer | null {
-  if (!state.customerEditor.editingId) {
-    return null;
-  }
-
-  return state.customers.find(customer => customer.id === state.customerEditor.editingId) ?? null;
-}
-
-export function nextInvoiceLabel(state: AppStore): string {
-  return formatInvoiceNumber(state.nextInvoiceSequence);
 }

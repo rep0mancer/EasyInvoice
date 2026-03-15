@@ -23,6 +23,20 @@ export interface CustomerDraft {
   vatId: string;
 }
 
+export interface AuthUser {
+  id: string;
+  email: string;
+}
+
+export interface AuthCredentials {
+  email: string;
+  password: string;
+}
+
+export interface RegisterCredentials extends AuthCredentials {
+  companyName: string;
+}
+
 export interface LineItem {
   id: string;
   description: string;
@@ -57,4 +71,10 @@ export interface InvoiceDraft {
   items: LineItem[];
   notes: string;
   createdInvoiceId: string | null;
+}
+
+export interface SessionPayload {
+  user: AuthUser;
+  profile: BusinessProfile;
+  nextInvoiceNumber: string;
 }

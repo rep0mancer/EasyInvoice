@@ -1,0 +1,82 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                  String    @id @default(cuid())
+  email               String    @unique
+  passwordHash        String
+  companyName         String?
+  address             String?   @db.Text
+  city                String?
+  postalCode          String?
+  country             String    @default("AT")
+  vatId               String?
+  phone               String?
+  contactEmail        String?
+  logo                String?   @db.Text
+  nextInvoiceSequence Int       @default(1)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  clients             Client[]
+  invoices            Invoice[]
+}
+
+model Client {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  address   String    @db.Text
+  vatId     String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  invoices  Invoice[]
+
+  @@index([userId])
+}
+
+model Invoice {
+  id            String        @id @default(cuid())
+  userId        String
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clientId      String
+  client        Client        @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  invoiceNumber String
+  invoiceDate   DateTime      @db.Date
+  dueDate       DateTime      @db.Date
+  subtotal      Decimal       @db.Decimal(12, 2)
+  vatTotal      Decimal       @db.Decimal(12, 2)
+  total         Decimal       @db.Decimal(12, 2)
+  notes         String        @default("") @db.Text
+  paid          Boolean       @default(false)
+  paidDate      DateTime?     @db.Date
+  paidMethod    String?
+  paidNotes     String?       @db.Text
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  items         InvoiceItem[]
+
+  @@unique([userId, invoiceNumber])
+  @@index([userId, createdAt])
+  @@index([clientId])
+}
+
+model InvoiceItem {
+  id          String   @id @default(cuid())
+  invoiceId   String
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  description String
+  quantity    Decimal  @db.Decimal(12, 2)
+  unitPrice   Decimal  @db.Decimal(12, 2)
+  vatRate     Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([invoiceId])
+}

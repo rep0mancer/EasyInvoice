@@ -16,7 +16,7 @@ interface InvoiceDetailsStepProps {
   onRemoveItem: (itemId: string) => void;
   onUpdateItem: <K extends keyof LineItem>(itemId: string, field: K, value: LineItem[K]) => void;
   onBack: () => void;
-  onCreate: () => void;
+  onCreate: () => Promise<void> | void;
 }
 
 export function InvoiceDetailsStep({
@@ -53,7 +53,7 @@ export function InvoiceDetailsStep({
           <input
             type="text"
             value={draft.invoiceNumber}
-            onChange={event => onDraftFieldChange('invoiceNumber', event.target.value)}
+            readOnly
             className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
           />
         </div>
@@ -178,7 +178,7 @@ export function InvoiceDetailsStep({
         </button>
         <button
           type="button"
-          onClick={onCreate}
+          onClick={() => { void onCreate(); }}
           className="inline-flex items-center gap-2 rounded-2xl bg-primary px-5 py-3 text-sm font-semibold text-white hover:bg-primary-hover"
         >
           Save invoice

@@ -8,6 +8,7 @@ export function SettingsPage() {
   const updateSettingsField = useAppStore(state => state.updateSettingsField);
   const saveSettingsForm = useAppStore(state => state.saveSettingsForm);
   const resetSettingsForm = useAppStore(state => state.resetSettingsForm);
+  const isSyncing = useAppStore(state => state.isSyncing);
 
   return (
     <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
@@ -37,9 +38,14 @@ export function SettingsPage() {
         form={settingsForm}
         hasSavedProfile={Boolean(profile)}
         onFieldChange={updateSettingsField}
-        onSave={saveSettingsForm}
+        onSave={() => { void saveSettingsForm(); }}
         onReset={resetSettingsForm}
       />
+      {isSyncing && (
+        <p className="text-sm text-slate-500 xl:col-span-2">
+          Syncing business profile with the server...
+        </p>
+      )}
     </div>
   );
 }

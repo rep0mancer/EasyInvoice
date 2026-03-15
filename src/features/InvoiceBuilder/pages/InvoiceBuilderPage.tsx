@@ -1,5 +1,6 @@
 import { ArrowRight, Settings, Users } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { hasRequiredProfile } from '../../../lib/invoice';
 import { BuilderProgress } from '../components/BuilderProgress';
 import { CustomerSelectionStep } from '../components/CustomerSelectionStep';
 import { InvoiceDetailsStep } from '../components/InvoiceDetailsStep';
@@ -32,6 +33,7 @@ export function InvoiceBuilderPage() {
   const updateInvoiceDraftItem = useAppStore(state => state.updateInvoiceDraftItem);
   const createInvoice = useAppStore(state => state.createInvoice);
   const prepareNextInvoice = useAppStore(state => state.prepareNextInvoice);
+  const isSyncing = useAppStore(state => state.isSyncing);
 
   const filteredCustomers = customers.filter(customer => {
     const searchValue = invoiceCustomerSearch.trim().toLowerCase();
@@ -40,7 +42,7 @@ export function InvoiceBuilderPage() {
       customer.address.toLowerCase().includes(searchValue);
   });
 
-  if (!profile) {
+  if (!hasRequiredProfile(profile)) {
     return (
       <div className="rounded-[2rem] border border-dashed border-slate-300 bg-white p-10 text-center">
         <Settings className="mx-auto text-slate-400" size={32} />
@@ -100,9 +102,9 @@ export function InvoiceBuilderPage() {
           onStartAddCustomer={() => setDraftCustomerMode(true)}
           onCancelAddCustomer={() => setDraftCustomerMode(false)}
           onDraftCustomerFieldChange={updateDraftCustomerField}
-          onContinue={() => {
+          onContinue={async () => {
             if (isAddingDraftCustomer) {
-              const customer = saveDraftCustomer();
+              const customer = await saveDraftCustomer();
               if (customer) {
                 setInvoiceBuilderStep(2);
               }
@@ -125,16 +127,20 @@ export function InvoiceBuilderPage() {
           onRemoveItem={removeInvoiceDraftItem}
           onUpdateItem={updateInvoiceDraftItem}
           onBack={() => setInvoiceBuilderStep(1)}
-          onCreate={createInvoice}
+          onCreate={() => { void createInvoice(); }}
         />
       )}
 
-      {invoiceBuilderStep === 3 && createdInvoice && (
+      {invoiceBuilderStep === 3 && createdInvoice && profile && (
         <ReviewExportStep
           invoice={createdInvoice}
           profile={profile}
           onNewInvoice={prepareNextInvoice}
         />
+      )}
+
+      {isSyncing && (
+        <p className="text-sm text-slate-500">Syncing invoice data with the server...</p>
       )}
     </div>
   );

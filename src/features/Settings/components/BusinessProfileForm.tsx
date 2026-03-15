@@ -6,7 +6,7 @@ interface BusinessProfileFormProps {
   form: BusinessProfile;
   hasSavedProfile: boolean;
   onFieldChange: <K extends keyof BusinessProfile>(field: K, value: BusinessProfile[K]) => void;
-  onSave: () => void;
+  onSave: () => Promise<void> | void;
   onReset: () => void;
 }
 
@@ -128,7 +128,7 @@ export function BusinessProfileForm({
       <div className="mt-6 flex flex-wrap gap-3">
         <button
           type="button"
-          onClick={onSave}
+          onClick={() => { void onSave(); }}
           className="inline-flex items-center gap-2 rounded-2xl bg-primary px-4 py-3 text-sm font-semibold text-white hover:bg-primary-hover"
         >
           <Save size={16} />

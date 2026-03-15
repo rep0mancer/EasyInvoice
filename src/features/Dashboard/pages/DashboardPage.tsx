@@ -1,5 +1,6 @@
 import { ArrowRight, FileText, Settings, Users } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { hasRequiredProfile } from '../../../lib/invoice';
 import { DashboardSummary } from '../components/DashboardSummary';
 import { InvoiceFilters } from '../components/InvoiceFilters';
 import { InvoiceList } from '../components/InvoiceList';
@@ -44,6 +45,7 @@ export function DashboardPage() {
 
   const openInvoiceCount = invoices.filter(invoice => !invoice.paid).length;
   const revenue = invoices.reduce((sum, invoice) => sum + invoice.total, 0);
+  const profileReady = hasRequiredProfile(profile);
 
   return (
     <div className="space-y-6">
@@ -89,10 +91,10 @@ export function DashboardPage() {
             Readiness
           </p>
           <h3 className="mt-4 text-2xl font-heading font-bold text-slate-900">
-            {profile ? 'Profile configured' : 'Complete your business profile'}
+            {profileReady ? 'Profile configured' : 'Complete your business profile'}
           </h3>
           <p className="mt-3 text-sm text-slate-500">
-            {profile
+            {profileReady
               ? 'Your company profile is available to every feature through the global store.'
               : 'Before exporting invoices, add your business details in Settings.'}
           </p>
@@ -101,8 +103,8 @@ export function DashboardPage() {
             <div className="mt-4 space-y-3 text-sm text-slate-500">
               <p className="flex items-center justify-between">
                 <span>Company profile</span>
-                <span className={profile ? 'text-emerald-600' : 'text-amber-600'}>
-                  {profile ? 'Ready' : 'Needed'}
+                <span className={profileReady ? 'text-emerald-600' : 'text-amber-600'}>
+                  {profileReady ? 'Ready' : 'Needed'}
                 </span>
               </p>
               <p className="flex items-center justify-between">
@@ -176,7 +178,7 @@ export function DashboardPage() {
         )}
       </section>
 
-      {previewInvoice && profile && (
+      {previewInvoice && profileReady && profile && (
         <InvoicePreviewModal
           invoice={previewInvoice}
           profile={profile}
@@ -192,7 +194,7 @@ export function DashboardPage() {
           onMethodChange={value => updatePaymentDialogField('method', value)}
           onNotesChange={value => updatePaymentDialogField('notes', value)}
           onClose={closePaymentDialog}
-          onSave={savePaymentDialog}
+          onSave={() => { void savePaymentDialog(); }}
         />
       )}
     </div>

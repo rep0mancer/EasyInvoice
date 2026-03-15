@@ -15,6 +15,7 @@ export function ClientManagerPage() {
   const cancelCustomerEditor = useAppStore(state => state.cancelCustomerEditor);
   const removeCustomer = useAppStore(state => state.removeCustomer);
   const beginInvoiceForCustomer = useAppStore(state => state.beginInvoiceForCustomer);
+  const isSyncing = useAppStore(state => state.isSyncing);
 
   const filteredCustomers = customers.filter(customer => {
     const searchValue = clientSearch.trim().toLowerCase();
@@ -32,7 +33,7 @@ export function ClientManagerPage() {
         onSearchChange={setClientSearch}
         onCreateCustomer={() => startCustomerDraft()}
         onEditCustomer={startCustomerDraft}
-        onDeleteCustomer={removeCustomer}
+        onDeleteCustomer={customerId => { void removeCustomer(customerId); }}
         onCreateInvoice={customerId => {
           beginInvoiceForCustomer(customerId);
           navigate('/invoices/new');
@@ -42,9 +43,14 @@ export function ClientManagerPage() {
         draft={customerEditor.draft}
         isEditing={Boolean(customerEditor.editingId)}
         onFieldChange={updateCustomerEditorField}
-        onSave={saveCustomerEditor}
+        onSave={() => { void saveCustomerEditor(); }}
         onCancel={cancelCustomerEditor}
       />
+      {isSyncing && (
+        <p className="text-sm text-slate-500 xl:col-span-2">
+          Syncing client changes with the server...
+        </p>
+      )}
     </div>
   );
 }

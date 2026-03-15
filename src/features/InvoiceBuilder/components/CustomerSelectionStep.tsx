@@ -15,7 +15,7 @@ interface CustomerSelectionStepProps {
     field: K,
     value: CustomerDraft[K],
   ) => void;
-  onContinue: () => void;
+  onContinue: () => Promise<void> | void;
 }
 
 export function CustomerSelectionStep({
@@ -134,7 +134,7 @@ export function CustomerSelectionStep({
       <div className="mt-6 flex justify-end">
         <button
           type="button"
-          onClick={onContinue}
+          onClick={() => { void onContinue(); }}
           className="inline-flex items-center gap-2 rounded-2xl bg-primary px-5 py-3 text-sm font-semibold text-white hover:bg-primary-hover"
         >
           Continue

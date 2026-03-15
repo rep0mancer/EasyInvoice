@@ -6,10 +6,13 @@ import {
   InvoiceDraft,
   LineItem,
 } from '../types';
-import { generateId } from './storage';
 
 export function formatInvoiceNumber(sequence: number, date = new Date()): string {
   return `INV-${date.getFullYear()}-${sequence.toString().padStart(3, '0')}`;
+}
+
+function createLocalId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 export function todayIso(): string {
@@ -52,7 +55,7 @@ export function createEmptyCustomerDraft(): CustomerDraft {
 
 export function createLineItem(): LineItem {
   return {
-    id: generateId(),
+    id: createLocalId(),
     description: '',
     quantity: 1,
     unitPrice: 0,
@@ -61,12 +64,12 @@ export function createLineItem(): LineItem {
 }
 
 export function createInvoiceDraft(
-  sequence: number,
+  invoiceNumber: string,
   customerId: string | null = null,
 ): InvoiceDraft {
   return {
     customerId,
-    invoiceNumber: formatInvoiceNumber(sequence),
+    invoiceNumber,
     invoiceDate: todayIso(),
     dueDate: dueDateIso(),
     items: [createLineItem()],
@@ -96,7 +99,7 @@ export function buildInvoiceFromDraft(
   const totals = calculateInvoiceTotals(draft.items);
 
   return {
-    id: generateId(),
+    id: createLocalId(),
     invoiceNumber: draft.invoiceNumber,
     invoiceDate: draft.invoiceDate,
     dueDate: draft.dueDate,

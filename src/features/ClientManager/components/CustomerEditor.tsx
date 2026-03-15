@@ -5,7 +5,7 @@ interface CustomerEditorProps {
   draft: CustomerDraft;
   isEditing: boolean;
   onFieldChange: <K extends keyof CustomerDraft>(field: K, value: CustomerDraft[K]) => void;
-  onSave: () => void;
+  onSave: () => Promise<void> | void;
   onCancel: () => void;
 }
 
@@ -50,7 +50,7 @@ export function CustomerEditor({
       <div className="mt-6 flex gap-3">
         <button
           type="button"
-          onClick={onSave}
+          onClick={() => { void onSave(); }}
           className="inline-flex items-center gap-2 rounded-2xl bg-primary px-4 py-3 text-sm font-semibold text-white hover:bg-primary-hover"
         >
           <Save size={16} />
